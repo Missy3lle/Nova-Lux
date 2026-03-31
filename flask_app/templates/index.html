@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nova Lux</title>
+    <link rel="icon" href="{{ url_for('static', filename='logo.svg') }}" type="image/svg+xml">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+
+<!-- ── Sidebar ──────────────────────────────────────────── -->
+<div id="sidebar">
+    <div id="sidebar-header">
+        <img class="logo-img" src="{{ url_for('static', filename='logo.svg') }}" alt="Nova Lux">
+        <div class="brand">
+            <h1>Nova Lux</h1>
+            <span>AI Assistant</span>
+        </div>
+    </div>
+
+    <button id="new-chat-btn" onclick="resetChat()">+ New Chat</button>
+
+    <div class="sidebar-section">
+        <h3>Model</h3>
+        <select id="model-select" title="Choose model"></select>
+    </div>
+
+    <div class="sidebar-section">
+        <h3>Documents</h3>
+        <div id="doc-list"><span class="doc-empty">No files uploaded</span></div>
+    </div>
+
+    <div id="chat-history-section">
+        <div class="placeholder-text">Chat history will appear here</div>
+    </div>
+
+    <div id="sidebar-footer">Nova Lux &mdash; Powered by OpenAI</div>
+</div>
+
+<!-- ── Main Chat Area ──────────────────────────────────── -->
+<div id="main">
+    <div id="messages">
+        <div id="welcome">
+            <img class="welcome-logo" src="{{ url_for('static', filename='logo.svg') }}" alt="Nova Lux">
+            <h2>Nova Lux</h2>
+            <p>How can I help you today?</p>
+        </div>
+    </div>
+
+    <div id="input-area">
+        <div id="input-box">
+            <button class="attach-btn" onclick="document.getElementById('file-input').click()" title="Attach file">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
+                </svg>
+            </button>
+            <input type="file" id="file-input" accept=".txt,.pdf,.csv,.xlsx" onchange="uploadFile(this)">
+            <textarea id="user-input" rows="1" placeholder="Message Nova Lux…"
+                      onkeydown="handleKey(event)"></textarea>
+            <button id="send-btn" onclick="sendMessage()" title="Send">
+                <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            </button>
+        </div>
+        <div id="file-status"></div>
+    </div>
+</div>
+
+<script>
+    const LOGO_URL  = "{{ url_for('static', filename='logo.svg') }}";
+    const messages  = document.getElementById('messages');
+    const welcome   = document.getElementById('welcome');
+    const userInput = document.getElementById('user-input');
+    const sendBtn   = document.getElementById('send-btn');
+    const modelSel  = document.getElementById('model-select');
+
+    // Auto-resize textarea
+    userInput.addEventListener('input', () => {
+        userInput.style.height = 'auto';
+        userInput.style.height = Math.min(userInput.scrollHeight, 150) + 'px';
+    });
+
+    function handleKey(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+        }
+    }
+
+    // ── Load available models ─────────────────────────────
+    (async () => {
+        try {
+            const res  = await fetch('/api/models');
+            const data = await res.json();
+            data.models.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m;
+                opt.textContent = m;
+                if (m === data.current) opt.selected = true;
+                modelSel.appendChild(opt);
+            });
+        } catch { /* fallback */ }
+    })();
+
+    modelSel.addEventListener('change', async () => {
+        await fetch('/api/model', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ model: modelSel.value }),
+        });
+    });
+
+    // ── Send message (streaming) ──────────────────────────
+    async function sendMessage() {
+        const text = userInput.value.trim();
+        if (!text) return;
+
+        if (welcome) welcome.remove();
+
+        appendMsg(text, 'user');
+        userInput.value = '';
+        userInput.style.height = 'auto';
+        sendBtn.disabled = true;
+
+        const botContent = appendMsg('', 'bot');
+
+        try {
+            const res = await fetch('/api/chat/stream', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ message: text }),
+            });
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    const payload = line.slice(6);
+                    if (payload === '[DONE]') continue;
+                    if (payload.startsWith('[ERROR]')) {
+                        botContent.closest('.msg-row').className = 'msg-row error-row';
+                        botContent.textContent = payload.slice(8);
+                        continue;
+                    }
+                    botContent.textContent += payload;
+                }
+                messages.scrollTop = messages.scrollHeight;
+            }
+        } catch (err) {
+            botContent.closest('.msg-row').className = 'msg-row error-row';
+            botContent.textContent = 'Connection error: ' + err.message;
+        }
+
+        sendBtn.disabled = false;
+        userInput.focus();
+    }
+
+    // ── File upload ────────────────────────────────────────
+    const fileStatus = document.getElementById('file-status');
+    const docList    = document.getElementById('doc-list');
+
+    async function uploadFile(input) {
+        const file = input.files[0];
+        if (!file) return;
+
+        fileStatus.textContent = `Uploading ${file.name}…`;
+        const form = new FormData();
+        form.append('file', file);
+
+        try {
+            const res = await fetch('/api/upload', { method: 'POST', body: form });
+            const data = await res.json();
+            if (res.ok) {
+                fileStatus.textContent = data.message;
+                if (welcome) welcome.remove();
+                appendMsg(`📎 Uploaded: ${file.name} (${data.chunks} chunks indexed)`, 'bot');
+                refreshDocList();
+            } else {
+                fileStatus.textContent = data.error;
+            }
+        } catch (err) {
+            fileStatus.textContent = 'Upload failed: ' + err.message;
+        }
+        setTimeout(() => fileStatus.textContent = '', 4000);
+        input.value = '';
+    }
+
+    async function refreshDocList() {
+        try {
+            const res = await fetch('/api/documents');
+            const data = await res.json();
+            if (data.sources.length === 0) {
+                docList.innerHTML = '<span class="doc-empty">No files uploaded</span>';
+                return;
+            }
+            docList.innerHTML = '';
+            data.sources.forEach(src => {
+                const tag = document.createElement('span');
+                tag.className = 'doc-tag';
+                tag.textContent = src;
+                docList.appendChild(tag);
+            });
+        } catch { /* ignore */ }
+    }
+    refreshDocList();
+
+    // ── Reset chat ────────────────────────────────────────
+    async function resetChat() {
+        await fetch('/api/reset', { method: 'POST' });
+        messages.innerHTML = `
+            <div id="welcome">
+                <img class="welcome-logo" src="${LOGO_URL}" alt="Nova Lux">
+                <h2>Nova Lux</h2>
+                <p>How can I help you today?</p>
+            </div>`;
+    }
+
+    // ── Helpers ───────────────────────────────────────────
+    function appendMsg(text, type) {
+        const row = document.createElement('div');
+        row.className = 'msg-row ' + (type === 'user' ? 'user-row' : 'bot-row');
+
+        const avatar = document.createElement('div');
+        avatar.className = 'msg-avatar';
+        avatar.textContent = type === 'user' ? 'Y' : 'N';
+
+        const content = document.createElement('div');
+        content.className = 'msg-content';
+        content.textContent = text;
+
+        row.appendChild(avatar);
+        row.appendChild(content);
+        messages.appendChild(row);
+        messages.scrollTop = messages.scrollHeight;
+        return content;
+    }
+</script>
+</body>
+</html>
