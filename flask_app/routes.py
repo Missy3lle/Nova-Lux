@@ -1,10 +1,14 @@
 import os
 from pathlib import Path
-
 from flask import Blueprint, request, jsonify, render_template, Response
 from werkzeug.utils import secure_filename
 from chat import ChatSession, AVAILABLE_MODELS
 from rag_pipeline import RAGPipeline, UPLOAD_DIR
+
+# Load environment variables (override=True ensures .env values take priority)
+from dotenv import load_dotenv
+_env_path = Path(__file__).resolve().parent.parent / '.env'
+load_dotenv(_env_path, override=True)
 
 ALLOWED_EXTENSIONS = {'.txt', '.pdf', '.csv', '.xlsx'}
 
@@ -19,6 +23,7 @@ session = ChatSession(rag)
 def index():
     """Serve the chatbot UI."""
     return render_template('index.html')
+
 
 @chatbot_bp.route('/api/chat', methods=['POST'])
 def chat():
@@ -49,7 +54,9 @@ def chat_stream():
     def generate():
         try:
             for chunk in session.send_stream(user_message):
-                yield f"data: {chunk}\n\n"
+                # Escape newlines so SSE protocol doesn't break
+                safe_chunk = chunk.replace('\n', '\\n')
+                yield f"data: {safe_chunk}\n\n"
             yield "data: [DONE]\n\n"
         except RuntimeError as e:
             yield f"data: [ERROR] {e}\n\n"
@@ -120,6 +127,6 @@ def clear_documents():
 @chatbot_bp.route('/api/reset', methods=['POST'])
 def reset():
     """Reset the chatbot session."""
-    from chat import build_system_prompt
-    session.history = [{"role": "system", "content": build_system_prompt()}]
+    from chat import get_system_prompt
+    session.history = [{"role": "system", "content": get_system_prompt()}]
     return jsonify({'message': 'Chat session reset'})

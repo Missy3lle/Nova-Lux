@@ -21,6 +21,8 @@ load_dotenv()
 import openai
 from openai import OpenAI
 from rag_pipeline import RAGPipeline, UPLOAD_DIR
+from tools import TOOL_DEFINITIONS, TOOL_FUNCTIONS
+import json
 
 
 AVAILABLE_MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"]
@@ -31,26 +33,59 @@ MAX_HISTORY = 20  # conversation turns to keep
 
 
 SYSTEM_PROMPT_TEMPLATE = """\
-You are an AI assistant optimized for efficient, context-aware conversations \
-in a business environment.
+You are Nova, an upgraded specialized Pastry Chef AI Assistant with professional baking expertise.
 
-Current date and time: {current_datetime}
+YOUR ROLE:
+You are an experienced pastry chef designed to help users bake smarter, troubleshoot issues, and manage recipes efficiently.
 
-Rules:
-- Provide accurate, concise, professional responses.
-- Always use the current date/time above when answering time-related questions.
-- Keep answers under 200 words unless the user asks for more detail.
-- Use bullet points or numbered steps when structure helps clarity.
-- If document CONTEXT is provided, prioritize it over general knowledge.
-- Never fabricate facts unsupported by provided context.
-- If you don't know the answer, say so and suggest next steps.
-- Track and reference earlier conversation points when relevant.
+PERSONALITY:
+You are warm, enthusiastic, and encouraging like a fun pastry chef friend who loves sharing their passion. You use emojis naturally to add personality and visual flair. You're supportive and make baking feel exciting, not intimidating.
+
+CORE CAPABILITIES (in priority order):
+You can search for recipes online from a comprehensive recipe database, including desserts, pastries, and baked goods. You can help with recipe scaling by accurately adjusting ingredient quantities for different batch sizes while maintaining proper ratios. You can convert units between grams, ounces, pounds, milliliters, and cups. You can suggest ingredient substitutions and explain how they affect the outcome in terms of texture, taste, and structure. You can troubleshoot baking issues by identifying causes of problems like dense cakes, lack of rise, or dryness, and provide fixes. You can help with costing and pricing by calculating cost per recipe and per portion, and suggest selling prices with profit margins. You can also optimize kitchen workflow by suggesting efficient prep order and timing for multi-step processes.
+
+RESPONSE STYLE:
+Format responses like ChatGPT does - clean, visual, and easy to scan. Follow these rules:
+
+1. Use emojis as visual markers for section headers (e.g. 🧾 Ingredients, 👩‍🍳 Instructions, 💡 Tips, 🍫 Variations)
+2. Use short, scannable lines instead of long paragraphs
+3. Break information into clear labeled sections with spacing between them
+4. Use numbered steps for instructions and processes
+5. Keep each point brief and to the point
+6. Include a 💡 Tips section when sharing recipes or techniques
+7. Include fun flavor variations or creative suggestions when relevant
+8. Use emojis naturally throughout to add warmth and personality (🍪🎂🧁🍰🍫👀 etc.)
+
+ENGAGEMENT RULE (IMPORTANT):
+Always end responses with a friendly follow-up suggestion or question to keep the conversation going. Examples:
+- "If you want, I can show you how to turn these into dessert bowls for plating 👀"
+- "Want me to find a gluten-free version of this? 🤔"
+- "I can also help you scale this recipe up for a larger batch if you need!"
+- "Should I suggest some flavor variations to try? 🍫🍊"
+Never end a response abruptly. Always leave the door open for more conversation.
+
+SMART BEHAVIOR:
+If a request is unclear, ask follow-up questions before answering. If the user makes an error, gently correct them and explain why. When appropriate, suggest helpful tips a pastry chef would naturally include. For time or date queries, ALWAYS use the get_current_time tool. For weather queries, ALWAYS use the get_current_weather tool.
+
+IMPORTANT - RECIPE SEARCH RULES:
+Only use the search_recipes tool when the user explicitly asks for a specific recipe (e.g. "find me a brownie recipe", "give me a chocolate cake recipe"). Do NOT search for recipes when the user asks general questions like "what dessert should I add to my menu", "what pairs well with X", "what are some good pastry ideas", or "tell me about macarons". For general advice, suggestions, recommendations, and discussions, just answer conversationally using your knowledge.
+
+IMPORTANT - RECIPE ADAPTATION RULE:
+When the recipe search returns results that don't exactly match what the user asked for (e.g. user asks for "brownie recipe" but results only include "Chocolate Raspberry Brownies"), DO NOT just present the unwanted variation. Instead, use your own pastry chef expertise to provide a classic version of the recipe the user actually wants, and optionally mention the variation as an alternative. Always prioritize giving the user what they asked for using your own knowledge over forcing an imperfect API result.
+
+RESTRICTIONS:
+Do not guess measurements or conversions. Do not provide unsafe or unverified baking advice. If document CONTEXT is provided, prioritize it over general knowledge.
+
+FALLBACK:
+For non-baking questions, respond professionally and concisely, but always remain focused on your pastry chef expertise.
 """
 
 
-def build_system_prompt() -> str:
-    now = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
-    return SYSTEM_PROMPT_TEMPLATE.format(current_datetime=now)
+def get_system_prompt() -> str:
+    """
+    Returns the system prompt.
+    """
+    return SYSTEM_PROMPT_TEMPLATE
 
 
 class ChatSession:
@@ -62,12 +97,12 @@ class ChatSession:
         self.model = model
         self.temperature = DEFAULT_TEMPERATURE
         self.max_tokens = DEFAULT_MAX_TOKENS
-        self.history: list[dict] = [{"role": "system", "content": build_system_prompt()}]
+        self.history: list[dict] = [{"role": "system", "content": get_system_prompt()}]
 
     # ── Core Chat ────────────────────────────────────────────────────
 
     def send(self, user_message: str) -> str:
-        """Send a message and get a response, with RAG context if available."""
+        """Send a message and get a response, with RAG context and tool support."""
         context = self.rag.get_context_string(user_message)
 
         if context:
@@ -81,62 +116,79 @@ class ChatSession:
         self.history.append({"role": "user", "content": augmented})
         self._trim_history()
 
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=self.history,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-            )
-        except openai.AuthenticationError:
-            raise RuntimeError("Invalid API key. Check your OPENAI_API_KEY.")
-        except openai.RateLimitError:
-            raise RuntimeError("Rate limit exceeded. Please wait and try again.")
-        except openai.APIConnectionError:
-            raise RuntimeError("Could not connect to OpenAI. Check your internet connection.")
+        # Make up to 3 iterations to handle tool calls
+        for iteration in range(3):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=self.history,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                    tools=TOOL_DEFINITIONS,
+                    tool_choice="auto"
+                )
+            except openai.AuthenticationError:
+                raise RuntimeError("Invalid API key. Check your OPENAI_API_KEY.")
+            except openai.RateLimitError:
+                raise RuntimeError("Rate limit exceeded. Please wait and try again.")
+            except openai.APIConnectionError:
+                raise RuntimeError("Could not connect to OpenAI. Check your internet connection.")
 
-        reply = response.choices[0].message.content
-        self.history.append({"role": "assistant", "content": reply})
-        return reply
+            message = response.choices[0].message
+            
+            # If the model wants to call a tool
+            if message.tool_calls:
+                # Add assistant's tool call request to history
+                self.history.append(message)
+                
+                # Execute each tool call
+                for tool_call in message.tool_calls:
+                    function_name = tool_call.function.name
+                    function_args = json.loads(tool_call.function.arguments)
+                    
+                    # Execute the tool
+                    function_result = self._execute_tool(function_name, function_args)
+                    
+                    # Add tool result to history
+                    self.history.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "name": function_name,
+                        "content": function_result
+                    })
+                
+                # Continue loop to get final response
+                continue
+            
+            # No tool calls - we have the final response
+            reply = message.content
+            self.history.append({"role": "assistant", "content": reply})
+            return reply
+        
+        # Failsafe if we hit max iterations
+        return "I apologize, but I encountered an issue processing your request."
+    
+    def _execute_tool(self, function_name: str, function_args: dict) -> str:
+        """Execute a tool function and return its result."""
+        if function_name in TOOL_FUNCTIONS:
+            try:
+                function = TOOL_FUNCTIONS[function_name]
+                result = function(**function_args)
+                return str(result)
+            except Exception as e:
+                return f"Error executing {function_name}: {str(e)}"
+        else:
+            return f"Unknown tool: {function_name}"
 
     def send_stream(self, user_message: str):
-        """Send a message and yield response chunks for streaming."""
-        context = self.rag.get_context_string(user_message)
-
-        if context:
-            augmented = (
-                f"CONTEXT (from uploaded documents):\n{context}\n\n"
-                f"USER QUESTION:\n{user_message}"
-            )
-        else:
-            augmented = user_message
-
-        self.history.append({"role": "user", "content": augmented})
-        self._trim_history()
-
-        try:
-            stream = self.client.chat.completions.create(
-                model=self.model,
-                messages=self.history,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                stream=True,
-            )
-        except openai.AuthenticationError:
-            raise RuntimeError("Invalid API key. Check your OPENAI_API_KEY.")
-        except openai.RateLimitError:
-            raise RuntimeError("Rate limit exceeded. Please wait and try again.")
-        except openai.APIConnectionError:
-            raise RuntimeError("Could not connect to OpenAI. Check your internet connection.")
-
-        full_reply = []
-        for chunk in stream:
-            delta = chunk.choices[0].delta.content
-            if delta:
-                full_reply.append(delta)
-                yield delta
-
-        self.history.append({"role": "assistant", "content": "".join(full_reply)})
+        """Send a message and yield response chunks for streaming (falls back to non-streaming for tool calls)."""
+        # Use the regular send() method which properly handles tools and history
+        result = self.send(user_message)
+        # Yield the complete response as chunks for the streaming protocol
+        # Split into smaller chunks for a streaming feel
+        chunk_size = 8
+        for i in range(0, len(result), chunk_size):
+            yield result[i:i + chunk_size]
 
     def _trim_history(self):
         """Keep history within bounds while preserving the system message."""
@@ -234,7 +286,7 @@ def main():
                 print_colored("Index cleared.", "yellow")
 
             elif cmd == "/reset":
-                session.history = [{"role": "system", "content": build_system_prompt()}]
+                session.history = [{"role": "system", "content": get_system_prompt()}]
                 print_colored("Conversation reset.", "yellow")
 
             elif cmd == "/upload":

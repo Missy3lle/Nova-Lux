@@ -124,6 +124,7 @@
         sendBtn.disabled = true;
 
         const botContent = appendMsg('', 'bot');
+        let fullText = '';
 
         try {
             const res = await fetch('/api/chat/stream', {
@@ -147,15 +148,25 @@
                 for (const line of lines) {
                     if (!line.startsWith('data: ')) continue;
                     const payload = line.slice(6);
-                    if (payload === '[DONE]') continue;
+                    if (payload === '[DONE]') {
+                        // Render final formatted version
+                        botContent.innerHTML = renderMarkdown(fullText);
+                        continue;
+                    }
                     if (payload.startsWith('[ERROR]')) {
                         botContent.closest('.msg-row').className = 'msg-row error-row';
                         botContent.textContent = payload.slice(8);
                         continue;
                     }
-                    botContent.textContent += payload;
+                    // Restore escaped newlines
+                    fullText += payload.replace(/\\n/g, '\n');
+                    botContent.textContent = fullText;
                 }
                 messages.scrollTop = messages.scrollHeight;
+            }
+            // Also render if [DONE] wasn't received
+            if (fullText && botContent.innerHTML === '') {
+                botContent.innerHTML = renderMarkdown(fullText);
             }
         } catch (err) {
             botContent.closest('.msg-row').className = 'msg-row error-row';
@@ -226,6 +237,30 @@
             </div>`;
     }
 
+    // ── Simple Markdown renderer ──────────────────────────
+    function renderMarkdown(text) {
+        let html = text
+            // Escape HTML first
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            // Bold: **text**
+            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+            // Italic: *text*
+            .replace(/\*(.+?)\*/g, '<em>$1</em>')
+            // Headers: ### text
+            .replace(/^### (.+)$/gm, '<h4>$1</h4>')
+            .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+            .replace(/^# (.+)$/gm, '<h2>$1</h2>')
+            // Horizontal rule: ---
+            .replace(/^---$/gm, '<hr>')
+            // Line breaks: double newline = paragraph break
+            .replace(/\n\n/g, '<br><br>')
+            // Single newline = line break
+            .replace(/\n/g, '<br>');
+        return html;
+    }
+
     // ── Helpers ───────────────────────────────────────────
     function appendMsg(text, type) {
         const row = document.createElement('div');
@@ -237,7 +272,11 @@
 
         const content = document.createElement('div');
         content.className = 'msg-content';
-        content.textContent = text;
+        if (type === 'bot' && text) {
+            content.innerHTML = renderMarkdown(text);
+        } else {
+            content.textContent = text;
+        }
 
         row.appendChild(avatar);
         row.appendChild(content);
