@@ -202,6 +202,254 @@ def search_recipes(query: str, max_results: int = 3) -> str:
         return f"Recipe search error: {str(e)}"
 
 
+def convert_units(value: float, from_unit: str, to_unit: str, ingredient: str = "generic") -> str:
+    """
+    Convert between baking measurement units (cups, grams, ounces, tablespoons, teaspoons, milliliters).
+    Accounts for ingredient density differences.
+    
+    Args:
+        value: Amount to convert
+        from_unit: Source unit (e.g., "cups", "grams", "ounces", "tbsp", "tsp", "ml")
+        to_unit: Target unit
+        ingredient: Type of ingredient for density-specific conversions (e.g., "flour", "sugar", "butter")
+    
+    Returns:
+        str: Converted value with unit
+    """
+    try:
+        # Density data (grams per cup) for common baking ingredients
+        densities = {
+            "flour": 120,
+            "all-purpose flour": 120,
+            "bread flour": 127,
+            "cake flour": 114,
+            "sugar": 200,
+            "granulated sugar": 200,
+            "brown sugar": 220,
+            "powdered sugar": 120,
+            "butter": 227,
+            "cocoa powder": 85,
+            "honey": 340,
+            "milk": 244,
+            "water": 237,
+            "oil": 218,
+            "generic": 200  # Default
+        }
+        
+        # Normalize units
+        unit_aliases = {
+            "cups": "cup", "c": "cup",
+            "grams": "gram", "g": "gram",
+            "ounces": "ounce", "oz": "ounce",
+            "tablespoons": "tbsp", "tablespoon": "tbsp", "T": "tbsp",
+            "teaspoons": "tsp", "teaspoon": "tsp", "t": "tsp",
+            "milliliters": "ml", "milliliter": "ml", "mL": "ml",
+            "pounds": "lb", "pound": "lb", "lbs": "lb"
+        }
+        
+        from_unit = unit_aliases.get(from_unit.lower(), from_unit.lower())
+        to_unit = unit_aliases.get(to_unit.lower(), to_unit.lower())
+        ingredient = ingredient.lower()
+        
+        # Get ingredient density (grams per cup)
+        density = densities.get(ingredient, densities["generic"])
+        
+        # Convert to grams first (base unit)
+        if from_unit == "gram":
+            grams = value
+        elif from_unit == "cup":
+            grams = value * density
+        elif from_unit == "ounce":
+            grams = value * 28.35
+        elif from_unit == "tbsp":
+            grams = value * (density / 16)  # 16 tbsp per cup
+        elif from_unit == "tsp":
+            grams = value * (density / 48)  # 48 tsp per cup
+        elif from_unit == "ml":
+            grams = value * (density / 237)  # 237 ml per cup
+        elif from_unit == "lb":
+            grams = value * 453.592
+        else:
+            return f"Unsupported unit: {from_unit}. Supported units: cups, grams, ounces, tbsp, tsp, ml, pounds"
+        
+        # Convert from grams to target unit
+        if to_unit == "gram":
+            result = grams
+        elif to_unit == "cup":
+            result = grams / density
+        elif to_unit == "ounce":
+            result = grams / 28.35
+        elif to_unit == "tbsp":
+            result = grams / (density / 16)
+        elif to_unit == "tsp":
+            result = grams / (density / 48)
+        elif to_unit == "ml":
+            result = grams / (density / 237)
+        elif to_unit == "lb":
+            result = grams / 453.592
+        else:
+            return f"Unsupported unit: {to_unit}. Supported units: cups, grams, ounces, tbsp, tsp, ml, pounds"
+        
+        # Format result
+        if result >= 100:
+            result_str = f"{result:.0f}"
+        elif result >= 10:
+            result_str = f"{result:.1f}"
+        else:
+            result_str = f"{result:.2f}"
+        
+        return f"{value} {from_unit} of {ingredient} = {result_str} {to_unit}"
+        
+    except Exception as e:
+        return f"Conversion error: {str(e)}"
+
+
+def scale_recipe(original_servings: int, desired_servings: int, ingredients_text: str) -> str:
+    """
+    Scale a recipe's ingredients from original servings to desired servings.
+    
+    Args:
+        original_servings: Original number of servings
+        desired_servings: Desired number of servings
+        ingredients_text: List of ingredients with amounts (one per line or comma-separated)
+    
+    Returns:
+        str: Scaled ingredients list with adjusted quantities
+    """
+    try:
+        if original_servings <= 0 or desired_servings <= 0:
+            return "Error: Servings must be positive numbers"
+        
+        scale_factor = desired_servings / original_servings
+        
+        # Parse ingredients (split by newlines or commas)
+        ingredients = [i.strip() for i in ingredients_text.replace('\n', ',').split(',') if i.strip()]
+        
+        if not ingredients:
+            return "No ingredients provided to scale"
+        
+        scaled_ingredients = []
+        
+        import re
+        for ingredient in ingredients:
+            # Try to find numbers (including fractions and decimals)
+            # Pattern: captures numbers like 1, 1.5, 1/2, 1 1/2
+            pattern = r'(\d+\.?\d*\s*/?\s*\d*\.?\d*)'
+            match = re.search(pattern, ingredient)
+            
+            if match:
+                original_amount_str = match.group(1).strip()
+                
+                # Parse the amount (handle fractions)
+                if '/' in original_amount_str:
+                    parts = original_amount_str.split()
+                    if len(parts) == 2:  # Mixed fraction like "1 1/2"
+                        whole = float(parts[0])
+                        frac_parts = parts[1].split('/')
+                        original_amount = whole + (float(frac_parts[0]) / float(frac_parts[1]))
+                    else:  # Simple fraction like "1/2"
+                        frac_parts = original_amount_str.split('/')
+                        original_amount = float(frac_parts[0]) / float(frac_parts[1])
+                else:
+                    original_amount = float(original_amount_str)
+                
+                # Scale the amount
+                scaled_amount = original_amount * scale_factor
+                
+                # Format nicely
+                if scaled_amount == int(scaled_amount):
+                    scaled_str = str(int(scaled_amount))
+                else:
+                    scaled_str = f"{scaled_amount:.2f}".rstrip('0').rstrip('.')
+                
+                # Replace original amount with scaled amount
+                scaled_ingredient = ingredient.replace(original_amount_str, scaled_str, 1)
+                scaled_ingredients.append(scaled_ingredient)
+            else:
+                # No number found, keep as is
+                scaled_ingredients.append(ingredient)
+        
+        result = f"Scaling from {original_servings} to {desired_servings} servings (×{scale_factor:.2f}):\n\n"
+        result += "\n".join(f"  {ing}" for ing in scaled_ingredients)
+        
+        return result
+        
+    except Exception as e:
+        return f"Scaling error: {str(e)}"
+
+
+def calculate_bakers_percentage(flour: float, water: float = 0, salt: float = 0, 
+                                 yeast: float = 0, sugar: float = 0, fat: float = 0,
+                                 other: float = 0) -> str:
+    """
+    Calculate baker's percentages for bread/dough recipes.
+    All ingredients are expressed as percentages of the flour weight.
+    
+    Args:
+        flour: Weight of flour in grams (the base - always 100%)
+        water: Weight of water in grams
+        salt: Weight of salt in grams
+        yeast: Weight of yeast in grams
+        sugar: Weight of sugar in grams
+        fat: Weight of fat/butter/oil in grams
+        other: Weight of other ingredients in grams
+    
+    Returns:
+        str: Baker's percentage breakdown with hydration and total weight
+    """
+    try:
+        if flour <= 0:
+            return "Error: Flour weight must be greater than 0"
+        
+        # Calculate percentages (flour is always 100%)
+        water_pct = (water / flour) * 100
+        salt_pct = (salt / flour) * 100
+        yeast_pct = (yeast / flour) * 100
+        sugar_pct = (sugar / flour) * 100
+        fat_pct = (fat / flour) * 100
+        other_pct = (other / flour) * 100
+        
+        # Total percentage and weight
+        total_pct = 100 + water_pct + salt_pct + yeast_pct + sugar_pct + fat_pct + other_pct
+        total_weight = flour + water + salt + yeast + sugar + fat + other
+        
+        # Format output
+        result = f"Baker's Percentage (based on {flour}g flour):\n\n"
+        result += f"  Flour:  100.0% ({flour}g)\n"
+        
+        if water > 0:
+            result += f"  Water:  {water_pct:.1f}% ({water}g)\n"
+        if salt > 0:
+            result += f"  Salt:   {salt_pct:.1f}% ({salt}g)\n"
+        if yeast > 0:
+            result += f"  Yeast:  {yeast_pct:.1f}% ({yeast}g)\n"
+        if sugar > 0:
+            result += f"  Sugar:  {sugar_pct:.1f}% ({sugar}g)\n"
+        if fat > 0:
+            result += f"  Fat:    {fat_pct:.1f}% ({fat}g)\n"
+        if other > 0:
+            result += f"  Other:  {other_pct:.1f}% ({other}g)\n"
+        
+        result += f"\n  Total:  {total_pct:.1f}% ({total_weight}g)\n"
+        
+        # Add hydration note if water is present
+        if water > 0:
+            result += f"\n  Hydration: {water_pct:.1f}%"
+            if water_pct < 50:
+                result += " (stiff dough)"
+            elif water_pct < 65:
+                result += " (medium dough)"
+            elif water_pct < 80:
+                result += " (soft/wet dough)"
+            else:
+                result += " (very wet/batter)"
+        
+        return result
+        
+    except Exception as e:
+        return f"Baker's percentage calculation error: {str(e)}"
+
+
 # Tool definitions for OpenAI function calling
 TOOL_DEFINITIONS = [
     {
@@ -254,6 +502,110 @@ TOOL_DEFINITIONS = [
                 "required": ["query"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "convert_units",
+            "description": "Convert between baking measurement units (cups, grams, ounces, tablespoons, teaspoons, milliliters, pounds). Accounts for ingredient-specific density. Use this whenever the user asks to convert measurements or asks 'how many grams in X cups' or similar. Common phrases: 'convert X cups to grams', 'how many ounces in', 'grams to cups', etc.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "value": {
+                        "type": "number",
+                        "description": "The numeric amount to convert (e.g., 2 for '2 cups')"
+                    },
+                    "from_unit": {
+                        "type": "string",
+                        "description": "Source unit: cups, grams, ounces, tbsp, tsp, ml, pounds",
+                        "enum": ["cups", "grams", "ounces", "tbsp", "tsp", "ml", "pounds", "cup", "gram", "ounce", "tablespoons", "teaspoons", "milliliters", "lb"]
+                    },
+                    "to_unit": {
+                        "type": "string",
+                        "description": "Target unit: cups, grams, ounces, tbsp, tsp, ml, pounds",
+                        "enum": ["cups", "grams", "ounces", "tbsp", "tsp", "ml", "pounds", "cup", "gram", "ounce", "tablespoons", "teaspoons", "milliliters", "lb"]
+                    },
+                    "ingredient": {
+                        "type": "string",
+                        "description": "Type of ingredient for accurate density conversion (e.g., 'flour', 'sugar', 'butter', 'cocoa powder', 'honey', 'milk', 'water', 'oil'). Use 'generic' if not specified.",
+                        "default": "generic"
+                    }
+                },
+                "required": ["value", "from_unit", "to_unit"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "scale_recipe",
+            "description": "Scale a recipe's ingredient quantities from original servings to desired servings. Use when user asks to 'scale up/down a recipe', 'double the recipe', 'make it for more people', 'adjust servings', etc. Multiplies all ingredient amounts proportionally.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "original_servings": {
+                        "type": "integer",
+                        "description": "Original number of servings the recipe makes"
+                    },
+                    "desired_servings": {
+                        "type": "integer",
+                        "description": "Desired number of servings needed"
+                    },
+                    "ingredients_text": {
+                        "type": "string",
+                        "description": "List of ingredients with amounts, separated by newlines or commas. Example: '2 cups flour, 1 cup sugar, 3 eggs, 1/2 tsp salt'"
+                    }
+                },
+                "required": ["original_servings", "desired_servings", "ingredients_text"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "calculate_bakers_percentage",
+            "description": "Calculate baker's percentages for bread and dough recipes. All ingredients expressed as percentages of flour weight (flour = 100%). Use when user asks about 'baker's percentage', 'hydration ratio', 'bread formula', or 'dough percentages'. Essential for professional bread baking.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "flour": {
+                        "type": "number",
+                        "description": "Weight of flour in grams (the base ingredient, always 100%)"
+                    },
+                    "water": {
+                        "type": "number",
+                        "description": "Weight of water in grams (for hydration calculation)",
+                        "default": 0
+                    },
+                    "salt": {
+                        "type": "number",
+                        "description": "Weight of salt in grams",
+                        "default": 0
+                    },
+                    "yeast": {
+                        "type": "number",
+                        "description": "Weight of yeast in grams",
+                        "default": 0
+                    },
+                    "sugar": {
+                        "type": "number",
+                        "description": "Weight of sugar in grams",
+                        "default": 0
+                    },
+                    "fat": {
+                        "type": "number",
+                        "description": "Weight of fat/butter/oil in grams",
+                        "default": 0
+                    },
+                    "other": {
+                        "type": "number",
+                        "description": "Weight of other ingredients in grams",
+                        "default": 0
+                    }
+                },
+                "required": ["flour"]
+            }
+        }
     }
 ]
 
@@ -261,5 +613,8 @@ TOOL_DEFINITIONS = [
 TOOL_FUNCTIONS = {
     "get_current_time": get_current_time,
     "get_current_weather": get_current_weather,
-    "search_recipes": search_recipes
+    "search_recipes": search_recipes,
+    "convert_units": convert_units,
+    "scale_recipe": scale_recipe,
+    "calculate_bakers_percentage": calculate_bakers_percentage
 }

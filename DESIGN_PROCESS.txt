@@ -1,0 +1,416 @@
+================================================================================
+NOVA - PASTRY CHEF AI ASSISTANT
+Design Process & Development Documentation
+================================================================================
+
+PROJECT OVERVIEW
+================================================================================
+Nova is a specialized AI chatbot designed to assist pastry chefs and baking 
+enthusiasts with recipe management, ingredient conversions, troubleshooting, 
+and real-time information. The system evolved from a basic business chatbot 
+into a domain-specific assistant with integrated tools and enhanced UX.
+
+DESIGN PROCESS
+================================================================================
+
+Phase 1: Foundation & Architecture
+-----------------------------------
+Initial Goal: Build a context-aware business chatbot with RAG capabilities
+
+Key Decisions:
+- Selected Flask as the web framework for its simplicity and Python integration
+- Implemented Blueprint architecture for modular route management
+- Chose OpenAI GPT-4o-mini for cost-effectiveness and function calling support
+- Integrated RAG pipeline for document upload and retrieval (PDFs, text, CSVs)
+- Designed conversation history management (20-turn sliding window)
+
+Technical Components:
+- chat.py: Session management, conversation history, system prompt
+- flask_app/: Blueprint-based routing, API endpoints, frontend templates
+- rag_pipeline.py: Document processing and vector search
+- run.py: Application entry point
+
+Phase 2: Tool Integration & Real-Time Data
+------------------------------------------
+Evolution: Transform from passive Q&A to active assistant with external tools
+
+Tool Selection Rationale:
+1. Time Tool: Pastry chefs need accurate timing for proofing, baking schedules
+   - Implementation: Internet-based time with fallback chain (time.is → worldtimeapi → system)
+   - Prevents static timestamps in system prompt causing inaccurate responses
+
+2. Weather Tool: Temperature/humidity affect baking outcomes
+   - API: OpenWeatherMap (reliable, free tier sufficient)
+   - Returns temperature, conditions, humidity for location-based advice
+
+3. Recipe Search Tool: Access to external recipe database
+   - API: TheMealDB (free, no authentication, comprehensive dessert library)
+   - Returns structured recipes with ingredients, instructions, categories
+
+Implementation Approach:
+- OpenAI function calling (tool_choice="auto") for natural language detection
+- Centralized TOOL_DEFINITIONS array for schema management
+- Separate tool functions in tools.py for maintainability
+- 3-iteration loop to handle multi-step tool chains
+
+Phase 3: Persona Development - "Nova"
+--------------------------------------
+Goal: Create engaging, domain-specific personality vs. generic assistant
+
+Design Principles:
+- Professional but warm - like a friendly expert chef sharing knowledge
+- Emoji integration for visual scanning and personality (🍫🎂👩‍🍳💡)
+- ChatGPT-style formatting: sections, numbered steps, scannable structure
+- Always engaging - end every response with follow-up questions
+- Knowledgeable fallback - can answer without tools using pastry expertise
+
+System Prompt Engineering:
+- Defined 8 core capabilities (recipe search, scaling, conversions, 
+  substitutions, troubleshooting, costing, workflow optimization)
+- Created 8 formatting rules for consistent response structure
+- Added engagement rule requiring follow-up questions
+- Implemented smart tool usage rules (when to search vs. when to advise)
+- Added recipe adaptation rules (use AI knowledge over imperfect API results)
+
+Phase 4: User Experience Refinement
+------------------------------------
+Problem-Solving Iterations:
+
+1. Response Formatting Evolution
+   Problem: Plain text responses were hard to scan
+   Solution: Implemented markdown rendering with custom JavaScript parser
+   - Converts **bold**, ### headers, --- dividers, line breaks to HTML
+   - Maintains clean, readable structure like ChatGPT
+
+2. SSE Streaming Fixes
+   Problem: Server-Sent Events protocol uses \n as delimiter, destroying content newlines
+   Solution: Two-stage escaping
+   - Server: Replace \n with \\n before transmission
+   - Client: Restore \\n to \n before markdown rendering
+   - Maintains formatting integrity during streaming
+
+3. Conversation Memory Issues
+   Problem: Nova "forgetting" previous messages in conversation
+   Root Cause: send_stream() made separate API calls with duplicate history entries
+   Solution: Refactored send_stream() as wrapper around send()
+   - Single source of truth for conversation history
+   - Proper history management with _trim_history()
+
+4. Recipe Search Behavioral Tuning
+   Problem: Tool triggered on general questions ("what dessert should I add?")
+   Solution: Multi-layered control
+   - Refined tool description: "ONLY use when user explicitly asks for recipe"
+   - Added RECIPE SEARCH RULES section to system prompt
+   - Testing with edge cases to validate behavior
+
+5. Recipe Adaptation Intelligence
+   Problem: API returns "Chocolate Raspberry Brownies" when user asks for "brownies"
+   Solution: Added recipe adaptation rule to system prompt
+   - Nova uses AI knowledge to provide classic version requested
+   - Can mention API variation as alternative option
+   - Prioritizes user intent over imperfect API matches
+
+6. Token Limit Adjustment
+   Problem: Recipes truncated mid-instruction
+   Solution: Increased OPENAI_MAX_TOKENS from 1024 to 2500
+   - Allows complete recipe responses with ingredients + instructions
+   - Balanced cost vs. completeness
+
+Phase 5: UI/UX Polish
+---------------------
+Visual Design:
+- Glassmorphism aesthetic with SVG flowing-lines background
+- Color palette: Soft pastels appropriate for pastry theme
+- Message bubbles: Distinct styling for user vs. bot messages
+- File upload integration with paperclip icon
+
+Interactive Features:
+- Real-time streaming responses (8-character chunks for smooth display)
+- Document upload interface for RAG (drag-drop support)
+- "New Chat" button with proper session reset
+- Mobile-responsive layout
+
+TECHNICAL ARCHITECTURE
+================================================================================
+
+Backend Stack:
+- Python 3.14
+- Flask (Blueprint architecture)
+- OpenAI API (gpt-4o-mini, function calling)
+- python-dotenv (environment configuration)
+- requests (HTTP calls to external APIs)
+
+Frontend Stack:
+- Vanilla JavaScript (no framework dependencies)
+- Custom markdown renderer
+- SSE (Server-Sent Events) for streaming
+- CSS3 (glassmorphism effects, animations)
+
+Data Flow:
+1. User input → Flask route (/api/chat or /api/chat/stream)
+2. ChatSession.send() → OpenAI API with tools array
+3. Function calling detection → Execute tool (time/weather/recipe)
+4. Tool results → Second API call with function response
+5. Final response → Stream to frontend via SSE
+6. Client renders markdown → Display in chat UI
+
+File Structure:
+Chatbot/
+├── run.py                    # Application entry point
+├── chat.py                   # Session management, conversation logic
+├── tools.py                  # Tool functions and OpenAI definitions
+├── rag_pipeline.py           # Document processing and vector search
+├── requirements.txt          # Python dependencies
+├── .env                      # Environment variables (API keys, config)
+├── flask_app/
+│   ├── __init__.py          # Flask app factory
+│   ├── routes.py            # API endpoints (chat, upload, reset, documents)
+│   ├── templates/
+│   │   └── index.html       # Chat interface with markdown rendering
+│   └── static/
+│       ├── styles.css       # Glassmorphism UI styling
+│       └── images/          # SVG backgrounds
+├── uploads/                  # User-uploaded documents for RAG
+└── index_store/             # Vector database for document embeddings
+
+CHALLENGES & KEY LEARNINGS
+================================================================================
+
+Challenge 1: Environment Variable Loading
+------------------------------------------
+Problem: 
+.env values not loading despite load_dotenv() call. Variables returning None.
+
+Root Causes Discovered:
+1. File encoding issue: .env was UTF-16, needed UTF-8
+2. VS Code terminal loading different .env from workspace root
+3. load_dotenv() defaults to not overriding existing environment variables
+
+Solutions Applied:
+- Re-saved .env as UTF-8 (no BOM)
+- Added explicit path: load_dotenv(Path(__file__).parent / '.env')
+- Used override=True to prevent terminal conflicts
+- Placed load_dotenv() BEFORE any environment variable reads
+
+Learning: Environment configuration is fragile. Always verify encoding, 
+use explicit paths, and consider override behavior in multi-environment setups.
+
+Challenge 2: OpenAI Function Calling Behavior
+----------------------------------------------
+Problem:
+Tool triggered too aggressively on tangential keywords, or not triggered when 
+clearly needed.
+
+Root Causes:
+- Tool descriptions heavily influence LLM's decision to call functions
+- System prompt instructions can conflict with tool descriptions
+- tool_choice="auto" sometimes makes unexpected decisions
+
+Solutions Applied:
+- Iteratively refined tool descriptions with explicit negativity 
+  ("Do NOT use this for general questions")
+- Added dedicated sections in system prompt (RECIPE SEARCH RULES)
+- Tested edge cases with curl commands to validate behavior
+- Used specific language: "ONLY when user explicitly asks for [X]"
+
+Learning: Function calling requires multi-layered control (tool schema + 
+system prompt + testing). LLMs take tool descriptions literally - be extremely 
+specific about when NOT to use tools.
+
+Challenge 3: SSE Protocol vs. Content Formatting
+-------------------------------------------------
+Problem:
+Newlines in streamed responses were destroyed, causing wall-of-text output.
+
+Root Cause:
+Server-Sent Events uses \n as the event delimiter. Any \n in content data 
+terminates the event early, breaking the message.
+
+Solution:
+Two-stage escaping:
+- Server (routes.py): chunk.replace('\n', '\\n')
+- Client (index.html): accumulated text.replace(/\\n/g, '\n')
+- Applied before markdown rendering to preserve structure
+
+Learning: Protocol-level constraints require content escaping. Always verify 
+special characters don't conflict with transport mechanisms. Test with 
+multi-line content early.
+
+Challenge 4: Conversation State Management
+-------------------------------------------
+Problem:
+Nova forgetting context from previous messages. Multi-turn conversations failing.
+
+Root Cause:
+send_stream() was duplicating user messages in history AND making separate 
+API calls from send(), causing history divergence and duplication.
+
+Solution:
+Refactored send_stream() to be a thin wrapper:
+- Calls send() internally (single source of truth)
+- Yields response in 8-character chunks
+- No separate history management
+- Eliminated dual API call pattern
+
+Learning: Don't Repeat Yourself (DRY) applies to stateful systems. When 
+multiple code paths manage the same state, they will diverge. Create single 
+source of truth, wrap for specialized behavior.
+
+Challenge 5: Token Limits vs. Complete Responses
+-------------------------------------------------
+Problem:
+Recipe responses cut off mid-instruction due to token limit.
+
+Analysis:
+- Default 1024 tokens insufficient for recipe format (ingredients + steps + tips)
+- TheMealDB recipes can have 20+ ingredients, 10+ instruction steps
+- Formatting (emojis, markdown, sections) increases token usage
+
+Solution:
+Increased OPENAI_MAX_TOKENS to 2500
+- Allows complete recipes with formatting
+- Cost increase minimal (gpt-4o-mini pricing)
+- Improved user experience worth tradeoff
+
+Learning: Default limits are conservative. Profile actual usage patterns and 
+adjust limits based on domain requirements. Document token usage for cost tracking.
+
+Challenge 6: API Limitations & Graceful Degradation
+----------------------------------------------------
+Problem:
+TheMealDB has limited recipe database (e.g., only 1 brownie recipe with raspberries).
+
+Solutions:
+1. Recipe Adaptation Rule: LLM uses own knowledge when API results don't match
+2. Transparency: Mention when providing AI-generated vs. API-sourced recipes
+3. Hybrid approach: Use tools when available, knowledge when tools insufficient
+
+Learning: External APIs have limitations. Design for graceful degradation. 
+LLMs have vast knowledge - leverage it as fallback. Make tool usage smart, not mandatory.
+
+Challenge 7: Reset Endpoint Breakage
+-------------------------------------
+Problem:
+"New Chat" button throwing 500 error after refactoring.
+
+Root Cause:
+routes.py imported non-existent build_system_prompt() function. Function had 
+been renamed to get_system_prompt() during refactoring.
+
+Solution:
+Updated import in routes.py to use correct function name.
+
+Learning: Refactoring function names requires finding all call sites. Use 
+IDE "Find All References" before renaming. Consider using search tools to 
+verify no orphaned imports.
+
+Challenge 8: Markdown Rendering Without Dependencies
+-----------------------------------------------------
+Problem:
+Wanted ChatGPT-style formatting but didn't want heavy markdown library dependency.
+
+Solution:
+Implemented lightweight custom renderMarkdown() function in JavaScript:
+- Converts **bold** to <strong>
+- Converts ### headers to <h3>
+- Converts --- to <hr>
+- Converts \n\n to <br><br>
+- Converts single \n to <br>
+
+Trade-offs:
++ No external dependencies
++ Full control over rendering
++ Fast, lightweight
+- Limited markdown feature set
+- Manual maintenance for new patterns
+
+Learning: Don't over-engineer. For limited markdown subset, custom parser is 
+faster than loading full library. Profile usage and choose lightest solution.
+
+KEY TECHNICAL LEARNINGS
+================================================================================
+
+1. OpenAI Function Calling Best Practices
+   - Tool descriptions should be explicit about when NOT to use tools
+   - System prompt and tool schema work together - align both
+   - Test edge cases with direct API calls (curl) before relying on UI testing
+   - tool_choice="auto" is smart but not perfect - guide it with clear language
+
+2. Flask Application Architecture
+   - Blueprint pattern scales well for modular route organization
+   - Session state management needs single source of truth
+   - SSE streaming requires careful content escaping
+   - Environment variables need explicit paths and override handling
+
+3. Frontend State Management
+   - Accumulate streamed chunks before rendering (avoid partial markdown)
+   - Separate user messages (textContent) from bot messages (innerHTML)
+   - Custom parsers beat libraries for simple use cases
+   - Test streaming with multi-line, formatted content
+
+4. API Integration Patterns
+   - Always implement fallback chains (primary → secondary → tertiary)
+   - External APIs are unreliable - design for degradation
+   - Free tiers have limitations - augment with AI knowledge
+   - Cache API responses when possible to reduce calls
+
+5. Prompt Engineering for Domain Experts
+   - Personality matters - warm > robotic for user engagement
+   - Structure responses for scannability (emojis, sections, steps)
+   - Always provide next steps (engagement rule)
+   - Domain knowledge > API dependency when quality matters
+
+6. Testing Strategies
+   - Test environment: curl commands for API validation
+   - Test behavior: edge cases for function calling logic
+   - Test UX: multi-line content for rendering/streaming
+   - Test state: multi-turn conversations for memory issues
+
+FUTURE ENHANCEMENT OPPORTUNITIES
+================================================================================
+
+Potential Improvements:
+1. User recipe book upload with vector search (already supported via RAG)
+2. Recipe scaling calculator with unit conversion UI
+3. Ingredient substitution database (dairy-free, gluten-free, vegan)
+4. Cost calculator with ingredient pricing database
+5. Multi-recipe batch workflow optimizer
+6. Image upload for baking troubleshooting (analyze texture/color)
+7. Timer management system for multi-recipe coordination
+8. Shopping list generator from selected recipes
+9. Nutritional information calculator
+10. Recipe sharing/export functionality (PDF, web link)
+
+Technical Debt to Address:
+- Add comprehensive error handling for API failures
+- Implement rate limiting for OpenAI API calls
+- Add logging for debugging and monitoring
+- Create automated test suite for function calling behavior
+- Optimize vector database queries for larger document sets
+- Add user authentication for persistent sessions
+- Implement conversation export (save chat history)
+
+CONCLUSION
+================================================================================
+
+The development of Nova demonstrates the evolution from a generic chatbot to a 
+specialized domain assistant. Key success factors included:
+
+1. Iterative refinement based on real usage patterns
+2. Multi-layered behavior control (schema + prompt + testing)
+3. Graceful degradation when external tools have limitations
+4. User experience focus (formatting, engagement, personality)
+5. Technical problem-solving for protocol constraints (SSE, newlines)
+
+The most valuable learning: Building effective AI assistants requires balancing 
+technical capabilities with user experience design. Tools and APIs provide 
+power, but personality, formatting, and smart behavior create delight.
+
+Nova succeeds not because it has access to recipe databases, but because it 
+knows when to search, when to adapt imperfect results, and when to engage users 
+with follow-up questions. The technical implementation serves the user 
+experience, not the other way around.
+
+================================================================================
+End of Documentation
+================================================================================
