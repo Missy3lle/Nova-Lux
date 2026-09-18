@@ -2,32 +2,38 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#F3EADB">
     <title>Nova Lux</title>
     <link rel="icon" href="{{ url_for('static', filename='logo.svg') }}" type="image/svg+xml">
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body>
 
-<!-- ── Sidebar ──────────────────────────────────────────── -->
-<div id="sidebar">
+<!-- ── Sidebar (drawer on small screens) ─────────────────── -->
+<aside id="sidebar" aria-label="Nova Lux settings">
     <div id="sidebar-header">
-        <img class="logo-img" src="{{ url_for('static', filename='logo.svg') }}" alt="Nova Lux">
+        <img class="logo-img" src="{{ url_for('static', filename='logo.svg') }}" alt="">
         <div class="brand">
             <h1>Nova Lux</h1>
-            <span>AI Assistant</span>
+            <span>Pastry Studio Assistant</span>
         </div>
+        <button id="drawer-close" type="button" aria-label="Close menu">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <path d="M6 6l12 12M18 6L6 18"/>
+            </svg>
+        </button>
     </div>
 
-    <button id="new-chat-btn" onclick="resetChat()">+ New Chat</button>
+    <button id="new-chat-btn" type="button" onclick="resetChat()">+ New Chat</button>
 
     <div class="sidebar-section">
-        <h3>Model</h3>
+        <label class="section-label" for="model-select">Model</label>
         <select id="model-select" title="Choose model"></select>
     </div>
 
     <div class="sidebar-section">
-        <h3>Documents</h3>
+        <h3 class="section-label">Documents</h3>
         <div id="doc-list"><span class="doc-empty">No files uploaded</span></div>
     </div>
 
@@ -36,44 +42,86 @@
     </div>
 
     <div id="sidebar-footer">Nova Lux &mdash; Powered by OpenAI</div>
-</div>
+</aside>
+<div id="scrim" hidden></div>
 
 <!-- ── Main Chat Area ──────────────────────────────────── -->
 <div id="main">
-    <div id="messages">
+    <header id="topbar">
+        <button id="menu-btn" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="sidebar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <path d="M4 7h16M4 12h16M4 17h16"/>
+            </svg>
+        </button>
+        <img class="logo-img" src="{{ url_for('static', filename='logo.svg') }}" alt="">
+        <span class="topbar-title">Nova Lux</span>
+    </header>
+
+    <div id="messages" role="log" aria-label="Conversation">
         <div id="welcome">
             <img class="welcome-logo" src="{{ url_for('static', filename='logo.svg') }}" alt="Nova Lux">
-            <h2>Nova Lux</h2>
-            <p>How can I help you today?</p>
+            <div class="eyebrow">Pastry Studio Assistant</div>
+            <h2>What are we baking today?</h2>
+            <p class="welcome-sub">Precise scaling, hydration and conversions, thoughtful troubleshooting, and answers drawn from your own pastry documents.</p>
+            <div class="ornament" aria-hidden="true"><i></i></div>
+            <div class="quick-actions">
+                <button type="button" class="chip" data-prompt="Scale this recipe from 12 to 24 servings: ">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+                    <span><span class="chip-title">Scale a recipe</span><span class="chip-sub">Resize a formula for any batch</span></span>
+                </button>
+                <button type="button" class="chip" data-prompt="What's the hydration of a dough with 500 g flour and 350 g water?">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3s6 6.2 6 10.5A6 6 0 0 1 6 13.5C6 9.2 12 3 12 3z"/></svg>
+                    <span><span class="chip-title">Calculate hydration</span><span class="chip-sub">Baker's percentages and water weights</span></span>
+                </button>
+                <button type="button" class="chip" data-prompt="Convert 2 cups of bread flour to grams.">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg>
+                    <span><span class="chip-title">Convert measurements</span><span class="chip-sub">Cups, grams, ounces and more</span></span>
+                </button>
+                <button type="button" class="chip" data-prompt="My cake came out dense and dry. What might have gone wrong?">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.2-4.2"/></svg>
+                    <span><span class="chip-title">Troubleshoot a bake</span><span class="chip-sub">Diagnose texture, rise and flavor</span></span>
+                </button>
+                <button type="button" class="chip" data-prompt="Using my uploaded documents, " data-needs-docs="true">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h7l4 4v14H7zM14 3v4h4"/></svg>
+                    <span><span class="chip-title">Ask my pastry documents</span><span class="chip-sub">Search your uploaded recipes and notes</span></span>
+                </button>
+            </div>
         </div>
     </div>
 
     <div id="input-area">
         <div id="input-box">
-            <button class="attach-btn" onclick="document.getElementById('file-input').click()" title="Attach file">
+            <button class="attach-btn" type="button" onclick="document.getElementById('file-input').click()"
+                    title="Attach file" aria-label="Attach a document (.txt, .pdf, .csv, .xlsx)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                     stroke-linecap="round" stroke-linejoin="round">
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
                 </svg>
             </button>
-            <input type="file" id="file-input" accept=".txt,.pdf,.csv,.xlsx" onchange="uploadFile(this)">
-            <textarea id="user-input" rows="1" placeholder="Message Nova Lux…"
+            <input type="file" id="file-input" accept=".txt,.pdf,.csv,.xlsx" onchange="uploadFile(this)" aria-label="Choose a document to upload">
+            <textarea id="user-input" rows="1" placeholder="Message Nova Lux…" aria-label="Message Nova Lux"
                       onkeydown="handleKey(event)"></textarea>
-            <button id="send-btn" onclick="sendMessage()" title="Send">
-                <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            <button id="send-btn" type="button" onclick="sendMessage()" title="Send" aria-label="Send message">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
             </button>
         </div>
-        <div id="file-status"></div>
+        <div id="file-status" role="status" aria-live="polite"></div>
     </div>
 </div>
 
 <script>
     const LOGO_URL  = "{{ url_for('static', filename='logo.svg') }}";
     const messages  = document.getElementById('messages');
-    const welcome   = document.getElementById('welcome');
     const userInput = document.getElementById('user-input');
     const sendBtn   = document.getElementById('send-btn');
     const modelSel  = document.getElementById('model-select');
+
+    // The welcome screen is built from the initial markup so New Chat can restore it
+    const WELCOME_HTML = document.getElementById('welcome').outerHTML;
+    function removeWelcome() {
+        const el = document.getElementById('welcome');
+        if (el) el.remove();
+    }
 
     // Auto-resize textarea
     userInput.addEventListener('input', () => {
@@ -87,6 +135,19 @@
             sendMessage();
         }
     }
+
+    // ── Quick-action chips: prefill the input (never auto-send) ──
+    messages.addEventListener('click', (e) => {
+        const chip = e.target.closest('.chip');
+        if (!chip) return;
+        userInput.value = chip.dataset.prompt;
+        userInput.dispatchEvent(new Event('input'));
+        userInput.focus();
+        userInput.setSelectionRange(userInput.value.length, userInput.value.length);
+        if (chip.dataset.needsDocs && !docList.querySelector('.doc-tag')) {
+            showStatus('No documents yet. Attach one with the paperclip, then ask away.');
+        }
+    });
 
     // ── Load available models ─────────────────────────────
     (async () => {
@@ -116,12 +177,13 @@
         const text = userInput.value.trim();
         if (!text) return;
 
-        if (welcome) welcome.remove();
+        removeWelcome();
 
         appendMsg(text, 'user');
         userInput.value = '';
         userInput.style.height = 'auto';
         sendBtn.disabled = true;
+        messages.setAttribute('aria-busy', 'true');
 
         const botContent = appendMsg('', 'bot');
         let fullText = '';
@@ -173,6 +235,7 @@
             botContent.textContent = 'Connection error: ' + err.message;
         }
 
+        messages.removeAttribute('aria-busy');
         sendBtn.disabled = false;
         userInput.focus();
     }
@@ -180,6 +243,13 @@
     // ── File upload ────────────────────────────────────────
     const fileStatus = document.getElementById('file-status');
     const docList    = document.getElementById('doc-list');
+
+    let statusTimer;
+    function showStatus(msg) {
+        fileStatus.textContent = msg;
+        clearTimeout(statusTimer);
+        statusTimer = setTimeout(() => fileStatus.textContent = '', 4000);
+    }
 
     async function uploadFile(input) {
         const file = input.files[0];
@@ -194,7 +264,7 @@
             const data = await res.json();
             if (res.ok) {
                 fileStatus.textContent = data.message;
-                if (welcome) welcome.remove();
+                removeWelcome();
                 appendMsg(`📎 Uploaded: ${file.name} (${data.chunks} chunks indexed)`, 'bot');
                 refreshDocList();
             } else {
@@ -203,7 +273,8 @@
         } catch (err) {
             fileStatus.textContent = 'Upload failed: ' + err.message;
         }
-        setTimeout(() => fileStatus.textContent = '', 4000);
+        clearTimeout(statusTimer);
+        statusTimer = setTimeout(() => fileStatus.textContent = '', 4000);
         input.value = '';
     }
 
@@ -229,13 +300,33 @@
     // ── Reset chat ────────────────────────────────────────
     async function resetChat() {
         await fetch('/api/reset', { method: 'POST' });
-        messages.innerHTML = `
-            <div id="welcome">
-                <img class="welcome-logo" src="${LOGO_URL}" alt="Nova Lux">
-                <h2>Nova Lux</h2>
-                <p>How can I help you today?</p>
-            </div>`;
+        messages.innerHTML = WELCOME_HTML;
+        setDrawer(false);
     }
+
+    // ── Mobile drawer ─────────────────────────────────────
+    const sidebar    = document.getElementById('sidebar');
+    const scrim      = document.getElementById('scrim');
+    const menuBtn    = document.getElementById('menu-btn');
+    const drawerBtn  = document.getElementById('drawer-close');
+
+    function setDrawer(open) {
+        const wasOpen = sidebar.classList.contains('open');
+        sidebar.classList.toggle('open', open);
+        scrim.hidden = !open;
+        menuBtn.setAttribute('aria-expanded', String(open));
+        if (open) drawerBtn.focus();
+        else if (wasOpen) menuBtn.focus();
+    }
+    menuBtn.addEventListener('click', () => setDrawer(true));
+    drawerBtn.addEventListener('click', () => setDrawer(false));
+    scrim.addEventListener('click', () => setDrawer(false));
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && sidebar.classList.contains('open')) setDrawer(false);
+    });
+    window.matchMedia('(min-width: 861px)').addEventListener('change', (e) => {
+        if (e.matches) setDrawer(false);
+    });
 
     // ── Simple Markdown renderer ──────────────────────────
     function renderMarkdown(text) {
@@ -268,7 +359,15 @@
 
         const avatar = document.createElement('div');
         avatar.className = 'msg-avatar';
-        avatar.textContent = type === 'user' ? 'Y' : 'N';
+        avatar.setAttribute('aria-hidden', 'true');
+        if (type === 'user') {
+            avatar.textContent = 'Y';
+        } else {
+            const img = document.createElement('img');
+            img.src = LOGO_URL;
+            img.alt = '';
+            avatar.appendChild(img);
+        }
 
         const content = document.createElement('div');
         content.className = 'msg-content';

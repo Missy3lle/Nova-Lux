@@ -1,33 +1,24 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="Nova Lux">
   <defs>
-    <linearGradient id="glow" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#60a5fa"/>
-      <stop offset="50%" stop-color="#3b82f6"/>
-      <stop offset="100%" stop-color="#1d4ed8"/>
+    <linearGradient id="caramel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#E7B26B"/>
+      <stop offset="0.55" stop-color="#C8843E"/>
+      <stop offset="1" stop-color="#9A4A26"/>
     </linearGradient>
-    <filter id="soft-glow" x="-30%" y="-30%" width="160%" height="160%">
-      <feGaussianBlur stdDeviation="4" result="blur"/>
-      <feMerge>
-        <feMergeNode in="blur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
+    <!-- Lamination: thin uneven cuts through the letter, like layers of dough -->
+    <mask id="layers" maskUnits="userSpaceOnUse" x="0" y="0" width="120" height="120">
+      <rect width="120" height="120" fill="#fff"/>
+      <rect x="0" y="43.5" width="120" height="1.6" fill="#000"/>
+      <rect x="0" y="52"   width="120" height="1.2" fill="#000"/>
+      <rect x="0" y="60.5" width="120" height="1.8" fill="#000"/>
+      <rect x="0" y="69"   width="120" height="1.2" fill="#000"/>
+      <rect x="0" y="77"   width="120" height="1.6" fill="#000"/>
+    </mask>
   </defs>
-  <!-- Background circle -->
-  <circle cx="60" cy="60" r="56" fill="url(#glow)"/>
-  <!-- Inner light burst (star / nova shape) -->
-  <g transform="translate(60,58)" fill="#fff" opacity="0.95" filter="url(#soft-glow)">
-    <!-- Vertical beam -->
-    <ellipse cx="0" cy="0" rx="4" ry="26"/>
-    <!-- Horizontal beam -->
-    <ellipse cx="0" cy="0" rx="26" ry="4"/>
-    <!-- Diagonal beams -->
-    <ellipse cx="0" cy="0" rx="3.5" ry="20" transform="rotate(45)"/>
-    <ellipse cx="0" cy="0" rx="3.5" ry="20" transform="rotate(-45)"/>
-    <!-- Centre flare -->
-    <circle cx="0" cy="0" r="8" fill="#fff"/>
+  <circle cx="60" cy="60" r="58" fill="#2B1A12"/>
+  <circle cx="60" cy="60" r="54.5" fill="none" stroke="#C8843E" stroke-opacity="0.55" stroke-width="1"/>
+  <g mask="url(#layers)">
+    <path d="M39 89 V31 L81 89 V31" fill="none" stroke="url(#caramel)" stroke-width="10.5"
+          stroke-linejoin="miter" stroke-miterlimit="6"/>
   </g>
-  <!-- "N" letter at centre -->
-  <text x="60" y="72" text-anchor="middle" font-family="Inter,system-ui,sans-serif"
-        font-size="28" font-weight="700" fill="url(#glow)" opacity="0.9">N</text>
 </svg>
