@@ -3,9 +3,11 @@ Agent Tools: Functions that the AI agent can call to get real-time information.
 """
 
 import os
+import re
 import time
 import requests
 from datetime import datetime, timedelta
+from fractions import Fraction
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
@@ -304,87 +306,144 @@ def convert_units(value: float, from_unit: str, to_unit: str, ingredient: str = 
         return f"Conversion error: {str(e)}"
 
 
+_UNICODE_FRACTIONS = {
+    "½": "1/2", "¼": "1/4", "¾": "3/4", "⅓": "1/3", "⅔": "2/3",
+    "⅛": "1/8", "⅜": "3/8", "⅝": "5/8", "⅞": "7/8",
+}
+_UF = "".join(_UNICODE_FRACTIONS)
+# Order matters: longer/more specific forms must be tried first.
+_QTY = (
+    rf"(?:\d+[ \t]*[{_UF}]|[{_UF}]|\d+[ \t]+\d+/\d+|\d+/\d+|\d*\.\d+|\d+)"
+)
+_LEADING_QTY_RE = re.compile(
+    rf"^(?P<prefix>[ \t]*(?:[-*•][ \t]+)?)(?P<q1>{_QTY})"
+    rf"(?:(?P<sep>[ \t]*(?:-|–|to)[ \t]*)(?P<q2>{_QTY}))?(?![\d/.])"
+)
+# A quantity followed by these is a temperature or duration, not an amount.
+_NOT_AN_AMOUNT_RE = re.compile(
+    r"(?:°|º|[FC]\b)|[ \t]*(?:degrees?\b|deg\b|min(?:ute)?s?\b|hours?\b|hrs?\b|sec(?:ond)?s?\b)",
+    re.IGNORECASE,
+)
+_VOLUME_UNIT_RE = re.compile(r"[ \t]*(?:cups?|c|tbsp|tsp|tablespoons?|teaspoons?)\b", re.IGNORECASE)
+_ITEM_SPLIT_RE = re.compile(rf",[ \t]*(?=[\d{_UF}]|\.\d)")
+_NICE_FRACTIONS = [(Fraction(n, d), f"{n}/{d}") for d, n in
+                   [(8, 1), (4, 1), (3, 1), (8, 3), (2, 1), (8, 5), (3, 2), (4, 3), (8, 7)]]
+
+
+def _parse_quantity(text: str) -> Fraction:
+    """Parse '1', '1.5', '1/2', '1 1/2', '½', or '1½' into an exact Fraction."""
+    for char, ascii_frac in _UNICODE_FRACTIONS.items():
+        if char in text:
+            whole = text.replace(char, "").strip()
+            return Fraction(ascii_frac) + (Fraction(whole) if whole else 0)
+    parts = text.split()
+    return sum(Fraction(p) for p in parts)
+
+
+def _format_quantity(value: Fraction, as_fraction: bool) -> str:
+    """Format a scaled amount as a tidy fraction ('1 1/2') or decimal ('4.5')."""
+    if as_fraction:
+        whole = int(value)
+        remainder = value - whole
+        if remainder < Fraction(1, 50):
+            return str(whole)
+        if remainder > Fraction(49, 50):
+            return str(whole + 1)
+        for candidate, label in _NICE_FRACTIONS:
+            if abs(remainder - candidate) < Fraction(1, 50):
+                return f"{whole} {label}" if whole else label
+    number = float(value)
+    if number == int(number):
+        return str(int(number))
+    return f"{number:.2f}".rstrip("0").rstrip(".")
+
+
+def _scale_ingredient_line(line: str, factor: Fraction) -> str:
+    """Scale the leading quantity of one ingredient line; leave everything else as written."""
+    match = _LEADING_QTY_RE.match(line)
+    if not match:
+        return line
+
+    rest = line[match.end():]
+    if _NOT_AN_AMOUNT_RE.match(rest):
+        return line
+
+    q1, q2 = match.group("q1"), match.group("q2")
+    as_fraction = (
+        "/" in q1 or (q2 is not None and "/" in q2)
+        or any(c in q1 + (q2 or "") for c in _UNICODE_FRACTIONS)
+        or bool(_VOLUME_UNIT_RE.match(rest))
+    )
+
+    try:
+        scaled = _format_quantity(_parse_quantity(q1) * factor, as_fraction)
+        if q2 is not None:
+            scaled += match.group("sep") + _format_quantity(_parse_quantity(q2) * factor, as_fraction)
+    except (ZeroDivisionError, ValueError):
+        return line  # e.g. "1/0" - not a real quantity, leave it untouched
+
+    return match.group("prefix") + scaled + rest
+
+
 def scale_recipe(original_servings: int, desired_servings: int, ingredients_text: str) -> str:
     """
     Scale a recipe's ingredients from original servings to desired servings.
-    
+
+    Only the leading quantity of each ingredient is scaled (whole numbers, decimals,
+    fractions like 1/2, mixed fractions like 1 1/2, and ranges like 1-2). Units, names
+    and descriptions are preserved, and numbers such as oven temperatures or times are
+    never scaled.
+
     Args:
         original_servings: Original number of servings
         desired_servings: Desired number of servings
-        ingredients_text: List of ingredients with amounts (one per line or comma-separated)
-    
+        ingredients_text: List of ingredients with amounts (one per line, or comma-separated)
+
     Returns:
         str: Scaled ingredients list with adjusted quantities
     """
     try:
         if original_servings <= 0 or desired_servings <= 0:
             return "Error: Servings must be positive numbers"
-        
-        scale_factor = desired_servings / original_servings
-        
-        # Parse ingredients (split by newlines or commas)
-        ingredients = [i.strip() for i in ingredients_text.replace('\n', ',').split(',') if i.strip()]
-        
+
+        factor = Fraction(desired_servings) / Fraction(original_servings)
+
+        # One ingredient per line; commas only separate items when a new quantity follows,
+        # so descriptions like "1 cup butter, softened" stay intact.
+        ingredients = [
+            item.strip()
+            for line in ingredients_text.splitlines()
+            for item in _ITEM_SPLIT_RE.split(line)
+            if item.strip()
+        ]
+
         if not ingredients:
             return "No ingredients provided to scale"
-        
-        scaled_ingredients = []
-        
-        import re
-        for ingredient in ingredients:
-            # Try to find numbers (including fractions and decimals)
-            # Pattern: captures numbers like 1, 1.5, 1/2, 1 1/2
-            pattern = r'(\d+\.?\d*\s*/?\s*\d*\.?\d*)'
-            match = re.search(pattern, ingredient)
-            
-            if match:
-                original_amount_str = match.group(1).strip()
-                
-                # Parse the amount (handle fractions)
-                if '/' in original_amount_str:
-                    parts = original_amount_str.split()
-                    if len(parts) == 2:  # Mixed fraction like "1 1/2"
-                        whole = float(parts[0])
-                        frac_parts = parts[1].split('/')
-                        original_amount = whole + (float(frac_parts[0]) / float(frac_parts[1]))
-                    else:  # Simple fraction like "1/2"
-                        frac_parts = original_amount_str.split('/')
-                        original_amount = float(frac_parts[0]) / float(frac_parts[1])
-                else:
-                    original_amount = float(original_amount_str)
-                
-                # Scale the amount
-                scaled_amount = original_amount * scale_factor
-                
-                # Format nicely
-                if scaled_amount == int(scaled_amount):
-                    scaled_str = str(int(scaled_amount))
-                else:
-                    scaled_str = f"{scaled_amount:.2f}".rstrip('0').rstrip('.')
-                
-                # Replace original amount with scaled amount
-                scaled_ingredient = ingredient.replace(original_amount_str, scaled_str, 1)
-                scaled_ingredients.append(scaled_ingredient)
-            else:
-                # No number found, keep as is
-                scaled_ingredients.append(ingredient)
-        
-        result = f"Scaling from {original_servings} to {desired_servings} servings (×{scale_factor:.2f}):\n\n"
+
+        scaled_ingredients = [_scale_ingredient_line(item, factor) for item in ingredients]
+
+        result = f"Scaling from {original_servings} to {desired_servings} servings (×{float(factor):.2f}):\n\n"
         result += "\n".join(f"  {ing}" for ing in scaled_ingredients)
-        
+
         return result
-        
+
     except Exception as e:
         return f"Scaling error: {str(e)}"
 
 
-def calculate_bakers_percentage(flour: float, water: float = 0, salt: float = 0, 
+def _fmt_grams(value: float) -> str:
+    """Format a weight in grams without trailing zeros (350.0 -> '350', 12.50 -> '12.5')."""
+    return f"{value:.1f}".rstrip("0").rstrip(".") if value != int(value) else str(int(value))
+
+
+def calculate_bakers_percentage(flour: float, water: float = 0, salt: float = 0,
                                  yeast: float = 0, sugar: float = 0, fat: float = 0,
-                                 other: float = 0) -> str:
+                                 other: float = 0, target_hydration: float = None,
+                                 extra_ingredients: dict = None) -> str:
     """
     Calculate baker's percentages for bread/dough recipes.
     All ingredients are expressed as percentages of the flour weight.
-    
+
     Args:
         flour: Weight of flour in grams (the base - always 100%)
         water: Weight of water in grams
@@ -393,14 +452,35 @@ def calculate_bakers_percentage(flour: float, water: float = 0, salt: float = 0,
         sugar: Weight of sugar in grams
         fat: Weight of fat/butter/oil in grams
         other: Weight of other ingredients in grams
-    
+        target_hydration: Desired hydration percentage. When water is not given, the
+            water weight needed to reach this hydration is calculated.
+        extra_ingredients: Any additional named ingredients in grams,
+            e.g. {"eggs": 100, "milk": 60, "sourdough starter": 120}
+
     Returns:
-        str: Baker's percentage breakdown with hydration and total weight
+        str: Baker's percentage breakdown with the hydration calculation and total weight
     """
     try:
         if flour <= 0:
             return "Error: Flour weight must be greater than 0"
-        
+
+        extras = {str(name).strip(): float(grams) for name, grams in (extra_ingredients or {}).items()}
+        amounts = [water, salt, yeast, sugar, fat, other, *extras.values()]
+        if any(a < 0 for a in amounts):
+            return "Error: Ingredient weights cannot be negative"
+        if target_hydration is not None and target_hydration < 0:
+            return "Error: Target hydration cannot be negative"
+
+        # Work out water from a target hydration when no water weight was given
+        water_note = ""
+        if target_hydration is not None and water == 0:
+            water = flour * target_hydration / 100
+            water_note = (
+                f"  Water needed = flour × hydration ÷ 100\n"
+                f"               = {_fmt_grams(flour)} × {target_hydration:g} ÷ 100 "
+                f"= {_fmt_grams(round(water, 1))}g\n\n"
+            )
+
         # Calculate percentages (flour is always 100%)
         water_pct = (water / flour) * 100
         salt_pct = (salt / flour) * 100
@@ -408,33 +488,41 @@ def calculate_bakers_percentage(flour: float, water: float = 0, salt: float = 0,
         sugar_pct = (sugar / flour) * 100
         fat_pct = (fat / flour) * 100
         other_pct = (other / flour) * 100
-        
+
         # Total percentage and weight
-        total_pct = 100 + water_pct + salt_pct + yeast_pct + sugar_pct + fat_pct + other_pct
-        total_weight = flour + water + salt + yeast + sugar + fat + other
-        
+        total_weight = flour + water + salt + yeast + sugar + fat + other + sum(extras.values())
+        total_pct = total_weight / flour * 100
+
         # Format output
-        result = f"Baker's Percentage (based on {flour}g flour):\n\n"
-        result += f"  Flour:  100.0% ({flour}g)\n"
-        
+        result = water_note
+        result += f"Baker's Percentage (based on {_fmt_grams(flour)}g flour):\n\n"
+        result += f"  Flour:  100.0% ({_fmt_grams(flour)}g)\n"
+
         if water > 0:
-            result += f"  Water:  {water_pct:.1f}% ({water}g)\n"
+            result += f"  Water:  {water_pct:.1f}% ({_fmt_grams(round(water, 1))}g)\n"
         if salt > 0:
-            result += f"  Salt:   {salt_pct:.1f}% ({salt}g)\n"
+            result += f"  Salt:   {salt_pct:.1f}% ({_fmt_grams(salt)}g)\n"
         if yeast > 0:
-            result += f"  Yeast:  {yeast_pct:.1f}% ({yeast}g)\n"
+            result += f"  Yeast:  {yeast_pct:.1f}% ({_fmt_grams(yeast)}g)\n"
         if sugar > 0:
-            result += f"  Sugar:  {sugar_pct:.1f}% ({sugar}g)\n"
+            result += f"  Sugar:  {sugar_pct:.1f}% ({_fmt_grams(sugar)}g)\n"
         if fat > 0:
-            result += f"  Fat:    {fat_pct:.1f}% ({fat}g)\n"
+            result += f"  Fat:    {fat_pct:.1f}% ({_fmt_grams(fat)}g)\n"
         if other > 0:
-            result += f"  Other:  {other_pct:.1f}% ({other}g)\n"
-        
-        result += f"\n  Total:  {total_pct:.1f}% ({total_weight}g)\n"
-        
+            result += f"  Other:  {other_pct:.1f}% ({_fmt_grams(other)}g)\n"
+        for name, grams in extras.items():
+            if grams > 0:
+                result += f"  {name}:  {grams / flour * 100:.1f}% ({_fmt_grams(grams)}g)\n"
+
+        result += f"\n  Total:  {total_pct:.1f}% ({_fmt_grams(round(total_weight, 1))}g)\n"
+
         # Add hydration note if water is present
         if water > 0:
-            result += f"\n  Hydration: {water_pct:.1f}%"
+            result += (
+                f"\n  Hydration = water ÷ flour × 100"
+                f"\n            = {_fmt_grams(round(water, 1))} ÷ {_fmt_grams(flour)} × 100"
+                f" = {water_pct:.1f}%"
+            )
             if water_pct < 50:
                 result += " (stiff dough)"
             elif water_pct < 65:
@@ -443,9 +531,11 @@ def calculate_bakers_percentage(flour: float, water: float = 0, salt: float = 0,
                 result += " (soft/wet dough)"
             else:
                 result += " (very wet/batter)"
-        
+            if extras:
+                result += "\n  (Hydration counts the water weight only; other liquids are listed separately.)"
+
         return result
-        
+
     except Exception as e:
         return f"Baker's percentage calculation error: {str(e)}"
 
@@ -564,7 +654,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "calculate_bakers_percentage",
-            "description": "Calculate baker's percentages for bread and dough recipes. All ingredients expressed as percentages of flour weight (flour = 100%). Use when user asks about 'baker's percentage', 'hydration ratio', 'bread formula', or 'dough percentages'. Essential for professional bread baking.",
+            "description": "Calculate baker's percentages for bread and dough recipes. All ingredients expressed as percentages of flour weight (flour = 100%). Use when user asks about 'baker's percentage', 'hydration' (calculating it from flour and water weights, or finding the water needed for a target hydration), 'bread formula', or 'dough percentages'. Always use this tool for these calculations instead of computing by hand. Essential for professional bread baking.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -601,6 +691,15 @@ TOOL_DEFINITIONS = [
                         "type": "number",
                         "description": "Weight of other ingredients in grams",
                         "default": 0
+                    },
+                    "target_hydration": {
+                        "type": "number",
+                        "description": "Target hydration percentage (e.g. 70 for 70%). Use this when the user asks how much water is needed for a given hydration; leave water at 0 and the water weight is calculated."
+                    },
+                    "extra_ingredients": {
+                        "type": "object",
+                        "description": "Any additional named ingredients in grams, e.g. {\"eggs\": 100, \"milk\": 60, \"sourdough starter\": 120}. If several flours are used, add them together for the flour weight.",
+                        "additionalProperties": {"type": "number"}
                     }
                 },
                 "required": ["flour"]
